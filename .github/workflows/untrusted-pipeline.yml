@@ -21,4 +21,4 @@ jobs:
       temp-username: ${{ secrets.TEMP_REP_USERNAME }}
       temp-password: ${{ secrets.TEMP_REP_PASSWORD }}
       final-username: ${{ github.actor }}
-      final-password: ${{ secrets.GITHUB_TOKEN }} }}
+      final-password: ${{ secrets.GITHUB_TOKEN }}
