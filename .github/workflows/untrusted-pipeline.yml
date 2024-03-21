@@ -11,14 +11,9 @@ jobs:
       contents: read
       actions: read
       packages: write
-    uses: laerson/ssip-trusted-pipeline/.github/workflows/release.yml@main
+    uses: laerson/ssip-trusted-pipeline/.github/workflows/trusted-pipeline.yml@main
     with:
       temp-registry: ssip-hub.lsd.ufcg.edu.br
-      image-name: laerson/ssip-demo-project
-      digest: sha256:de2d5bf8a628f47faca703ac81072d89c168bc7a3e3f2d2ee34a1ee820735400
-      final-registry: ghcr.io
     secrets:
-      temp-username: ${{ secrets.TEMP_REP_USERNAME }}
-      temp-password: ${{ secrets.TEMP_REP_PASSWORD }}
-      final-username: ${{ github.actor }}
-      final-password: ${{ secrets.GITHUB_TOKEN }}
+      intermediary-registry-username: ${{ secrets.TEMP_REP_USERNAME }}
+      intermediary-registry-password: ${{ secrets.TEMP_REP_PASSWORD }}
