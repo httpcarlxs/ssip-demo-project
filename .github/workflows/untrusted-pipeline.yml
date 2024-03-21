@@ -9,4 +9,5 @@ jobs:
   call-trusted-pipeline:
     permissions:
       contents: read
-    uses: laerson/ssip-trusted-pipeline/.github/workflows/sast.yml@main
+      actions: read
+    uses: laerson/ssip-trusted-pipeline/.github/workflows/unit-test.yml@main
