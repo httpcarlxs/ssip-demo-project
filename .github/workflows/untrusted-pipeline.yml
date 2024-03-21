@@ -8,5 +8,5 @@ on:
 jobs:
   call-trusted-pipeline:
     permissions:
-      content: read
+      contents: read
     uses: laerson/ssip-trusted-pipeline/.github/workflows/sast.yml@main
