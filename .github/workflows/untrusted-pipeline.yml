@@ -10,11 +10,12 @@ jobs:
     permissions:
       contents: read
       actions: read
-    uses: laerson/ssip-trusted-pipeline/.github/workflows/sbom.yml@main
+    uses: laerson/ssip-trusted-pipeline/.github/workflows/vuln.yml@main
     with:
       registry: ssip-hub.lsd.ufcg.edu.br
-      image: laerson/ssip-demo-project
+      image-name: laerson/ssip-demo-project
       digest: sha256:de2d5bf8a628f47faca703ac81072d89c168bc7a3e3f2d2ee34a1ee820735400
+      threshold: "high"
     secrets:
       username: ${{ secrets.TEMP_REP_USERNAME }}
       password: ${{ secrets.TEMP_REP_PASSWORD }}
