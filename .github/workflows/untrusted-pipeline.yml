@@ -13,7 +13,7 @@ jobs:
     uses: laerson/ssip-trusted-pipeline/.github/workflows/sbom.yml@main
     with:
       registry: ssip-hub.lsd.ufcg.edu.br
-      image: ${{ github.repository }}
+      image: laerson/ssip-demo-project
       digest: de2d5bf8a628f47faca703ac81072d89c168bc7a3e3f2d2ee34a1ee820735400
     secrets:
       username: ${{ secrets.TEMP_REP_USERNAME }}
