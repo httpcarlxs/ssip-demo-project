@@ -1,15 +1,15 @@
 package main
 
 import (
-  "net/http"
+	"net/http"
 
-  "github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4"
 )
 
 func main() {
-  e := echo.New()
+	e := echo.New()
 
-  e.GET(("/", func(c echo.Context) error {
+	e.GET("/", func(c echo.Context) error {
 		// Get the contents of the GET request
 		query := c.QueryParam("query")
 
@@ -18,5 +18,4 @@ func main() {
 	})
 
 	e.Logger.Fatal(e.Start(":8080"))
-
 }
