@@ -10,4 +10,10 @@ jobs:
     permissions:
       contents: read
       actions: read
-    uses: laerson/ssip-trusted-pipeline/.github/workflows/unit-test.yml@main
+    uses: laerson/ssip-trusted-pipeline/.github/workflows/build.yml@main
+    with:
+      registry: ghcr.io
+      image-name: ${{ github.repository }}
+    secrets:
+      username: laerson
+      password: ${{ secrets.GITHUB_TOKEN }}
