@@ -12,8 +12,8 @@ jobs:
       actions: read
     uses: laerson/ssip-trusted-pipeline/.github/workflows/build.yml@main
     with:
-      registry: ghcr.io
+      registry: ssip-hub.lsd.ufcg.edu.br
       image-name: ${{ github.repository }}
     secrets:
-      username: laerson
-      password: ${{ secrets.GITHUB_TOKEN }}
+      username: ${{ secrets.TEMP_REP_USERNAME }}
+      password: ${{ secrets.TEMP_REP_PASSWORD }}
