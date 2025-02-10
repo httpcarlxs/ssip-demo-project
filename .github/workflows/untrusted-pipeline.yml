@@ -14,7 +14,7 @@ jobs:
       id-token: write
     uses: laerson/ssip-trusted-pipeline/.github/workflows/trusted-pipeline.yml@v1.0.0
     with:
-      temp-registry: ssip-hub.lsd.ufcg.edu.br
+      temp-registry: localhost:5000
       deployment: deployment.yml  # Esse arquivo está vazio
     secrets:
       intermediary-registry-username: ${{ secrets.TEMP_REP_USERNAME }}
