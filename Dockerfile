@@ -18,6 +18,9 @@ FROM cgr.dev/chainguard/static:latest
 
 COPY --from=build /app/main /main
 
+RUN addgroup -S ssipgroup && adduser -S ssip -G ssipgroup
+USER ssip
+
 EXPOSE 8080
 
 CMD ["/main"]
