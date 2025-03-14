@@ -2,7 +2,7 @@
 ARG BUILDKIT_SBOM_SCAN_CONTEXT=true
 ARG BUILDKIT_SBOM_SCAN_STAGE=true
 
-FROM cgr.dev/chainguard/go:latest as build
+FROM cgr.dev/chainguard/go:latest AS build
 
 WORKDIR /app
 
