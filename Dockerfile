@@ -14,11 +14,12 @@ COPY main.go ./
 
 RUN CGO_ENABLED=0 GOOS=linux go build -o main
 
-FROM cgr.dev/chainguard/static:latest
+FROM cgr.dev/chainguard/wolfi-base:latest
+
+RUN addgroup -S ssipgroup && adduser -S ssip -G ssipgroup
 
 COPY --from=build /app/main /main
 
-RUN addgroup -S ssipgroup && adduser -S ssip -G ssipgroup
 USER ssip
 
 EXPOSE 8080
