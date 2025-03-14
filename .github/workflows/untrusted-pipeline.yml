@@ -12,7 +12,7 @@ jobs:
       actions: read
       packages: write
       id-token: write
-    uses: laerson/ssip-trusted-pipeline/.github/workflows/trusted-pipeline.yml@v1.0.0
+    uses: httpcarlxs/ssip-trusted-pipeline/.github/workflows/trusted-pipeline.yml@main
     with:
       temp-registry: ssip-ufcg.privatedns.org
       deployment: deployment.yml  # Esse arquivo está vazio
