@@ -19,4 +19,5 @@ jobs:
     secrets:
       intermediary-registry-username: ${{ secrets.TEMP_REP_USERNAME }}
       intermediary-registry-password: ${{ secrets.TEMP_REP_PASSWORD }}
+      kubeconfig: ${{ secrets.KUBE_CONFIG }}
   
