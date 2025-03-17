@@ -36,5 +36,8 @@ FROM gcr.io/distroless/static AS spiffe-helper
 WORKDIR /
 COPY --link --from=builder /workspace/bin/spiffe-helper /spiffe-helper
 
+RUN addgroup -S ssipgroup && adduser -S ssip -G ssipgroup
+USER ssip
+
 ENTRYPOINT ["/spiffe-helper"]
 CMD []
