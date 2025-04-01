@@ -3,8 +3,8 @@ module github.com/spiffe/spiffe-helper
 go 1.23.6
 
 require (
+	github.com/hashicorp/consul v1.4.5
 	github.com/hashicorp/hcl v1.0.1-vault-7
-	github.com/hashicorp/consul v1.6.2
 	github.com/spiffe/go-spiffe/v2 v2.5.0
 	github.com/stretchr/testify v1.10.0
 	golang.org/x/sys v0.31.0
