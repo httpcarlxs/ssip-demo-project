@@ -4,12 +4,13 @@ go 1.23.6
 
 require (
 	github.com/hashicorp/hcl v1.0.1-vault-7
+	github.com/hashicorp/consul v1.6.2
 	github.com/spiffe/go-spiffe/v2 v2.5.0
 	github.com/stretchr/testify v1.10.0
 	golang.org/x/sys v0.31.0
 	google.golang.org/grpc v1.71.0
 	k8s.io/apimachinery v0.32.3
-	k8s.io/client-go v8.0.0+incompatible
+	k8s.io/client-go v0.32.3
 )
 
 require (
