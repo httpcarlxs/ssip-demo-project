@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/hashicorp/consul/api"
 	"github.com/sirupsen/logrus"
 	"github.com/spiffe/spiffe-helper/cmd/spiffe-helper/config"
 	"github.com/spiffe/spiffe-helper/pkg/health"
@@ -22,6 +23,7 @@ func main() {
 	daemonModeFlag := flag.Bool(daemonModeFlagName, true, "Toggle running as a daemon to rotate X.509/JWT or just fetch and exit")
 	flag.Parse()
 	log := logrus.WithField("system", "spiffe-helper")
+	_, err := api.NewClient(api.DefaultConfig())
 
 	log.Infof("Using configuration file: %q", *configFile)
 	hclConfig, err := config.ParseConfig(*configFile, *daemonModeFlag, daemonModeFlagName)
