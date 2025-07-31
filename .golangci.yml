@@ -1,0 +1,53 @@
+version: "2"
+linters:
+  enable:
+    - bodyclose
+    - dupword
+    - durationcheck
+    - errorlint
+    - goconst
+    - gocritic
+    - gosec
+    - intrange
+    - misspell
+    - nakedret
+    - nilerr
+    - nolintlint
+    - prealloc
+    - revive
+    - testifylint
+    - thelper
+    - unconvert
+    - unparam
+    - wastedassign
+    - whitespace
+  settings:
+    revive:
+      confidence: 0
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - .*\.pb\.go
+      - testdata$
+      - test/mock
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - .*\.pb\.go
+      - testdata$
+      - test/mock
+      - third_party$
+      - builtin$
+      - examples$

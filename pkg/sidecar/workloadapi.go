@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/spiffe/go-spiffe/v2/bundle/jwtbundle"
@@ -25,6 +26,39 @@ var (
 	}
 )
 
+func (s *Sidecar) watchX509Context(ctx context.Context) error {
+	err := s.client.WatchX509Context(ctx, &x509Watcher{sidecar: s})
+	if err != nil && !errors.Is(err, context.Canceled) {
+		return fmt.Errorf("watching X.509 context: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Sidecar) watchJWTBundles(ctx context.Context) error {
+	err := s.client.WatchJWTBundles(ctx, &JWTBundlesWatcher{sidecar: s})
+	if err != nil && !errors.Is(err, context.Canceled) {
+		return fmt.Errorf("watching JWT bundle updates: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Sidecar) watchJWTSVIDs(ctx context.Context) error {
+	var wg sync.WaitGroup
+	for _, jwtConfig := range s.config.JWTSVIDs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.updateJWTSVID(ctx, jwtConfig.JWTAudience, jwtConfig.JWTExtraAudiences, jwtConfig.JWTSVIDFilename)
+		}()
+	}
+
+	wg.Wait()
+
+	return nil
+}
+
 func (s *Sidecar) fetchAndWriteX509Context(ctx context.Context) error {
 	var x509Context *workloadapi.X509Context
 
@@ -39,7 +73,7 @@ func (s *Sidecar) fetchAndWriteX509Context(ctx context.Context) error {
 		return err
 	}
 
-	return disk.WriteX509Context(x509Context, s.config.AddIntermediatesToBundle, s.config.IncludeFederatedDomains, s.config.CertDir, s.config.SVIDFileName, s.config.SVIDKeyFileName, s.config.SVIDBundleFileName, s.config.CertFileMode, s.config.KeyFileMode, s.config.Hint)
+	return disk.WriteX509Context(x509Context, s.config.AddIntermediatesToBundle, s.config.IncludeFederatedDomains, s.config.CertDir, s.config.SVIDFilename, s.config.SVIDKeyFilename, s.config.SVIDBundleFilename, s.config.CertFileMode, s.config.KeyFileMode, s.config.Hint)
 }
 
 func (s *Sidecar) fetchAndWriteJWTBundle(ctx context.Context) error {

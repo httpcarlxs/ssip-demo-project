@@ -2,16 +2,17 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/hashicorp/consul/api"
 	"github.com/sirupsen/logrus"
 	"github.com/spiffe/spiffe-helper/cmd/spiffe-helper/config"
 	"github.com/spiffe/spiffe-helper/pkg/health"
 	"github.com/spiffe/spiffe-helper/pkg/sidecar"
+	"github.com/spiffe/spiffe-helper/pkg/util"
 )
 
 const (
@@ -23,7 +24,6 @@ func main() {
 	daemonModeFlag := flag.Bool(daemonModeFlagName, true, "Toggle running as a daemon to rotate X.509/JWT or just fetch and exit")
 	flag.Parse()
 	log := logrus.WithField("system", "spiffe-helper")
-	_, err := api.NewClient(api.DefaultConfig())
 
 	log.Infof("Using configuration file: %q", *configFile)
 	hclConfig, err := config.ParseConfig(*configFile, *daemonModeFlag, daemonModeFlagName)
@@ -52,18 +52,25 @@ func startSidecar(hclConfig *config.Config, log logrus.FieldLogger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if *hclConfig.DaemonMode && hclConfig.HealthCheck.ListenerEnabled {
-		log.Info("Starting health server")
-		if err := health.StartHealthServer(hclConfig.HealthCheck, log, spiffeSidecar); err != nil {
-			return err
-		}
-	}
-
 	if !*hclConfig.DaemonMode {
 		log.Info("Daemon mode disabled")
 		return spiffeSidecar.Run(ctx)
 	}
 
 	log.Info("Launching daemon")
-	return spiffeSidecar.RunDaemon(ctx)
+	tasks := []func(context.Context) error{
+		spiffeSidecar.RunDaemon,
+	}
+
+	if hclConfig.HealthCheck.ListenerEnabled {
+		healthServer := health.New(&hclConfig.HealthCheck, log, spiffeSidecar)
+		tasks = append(tasks, healthServer.Start)
+	}
+
+	err := util.RunTasks(ctx, tasks...)
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
+
+	return err
 }
