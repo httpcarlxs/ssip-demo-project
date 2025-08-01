@@ -43,7 +43,7 @@ type Config struct {
 	DaemonMode               *bool         `hcl:"daemon_mode"`
 	HealthCheck              health.Config `hcl:"health_checks"`
 	Hint                     string        `hcl:"hint"`
-    ParallelRequests 		 int 		   `hcl:"parallel_requests"`
+	ParallelRequests         int           `hcl:"parallel_requests"`
 
 	// x509 configuration
 	SVIDFilename       string `hcl:"svid_file_name"`
@@ -241,7 +241,7 @@ func NewSidecarConfig(config *Config, log logrus.FieldLogger) *sidecar.Config {
 		SVIDFilename:             config.SVIDFilename,
 		SVIDKeyFilename:          config.SVIDKeyFilename,
 		SVIDBundleFilename:       config.SVIDBundleFilename,
-		ParallelRequests: 		  config.ParallelRequests,
+		ParallelRequests:         config.ParallelRequests,
 		Hint:                     config.Hint,
 	}
 

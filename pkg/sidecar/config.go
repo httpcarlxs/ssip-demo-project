@@ -63,7 +63,7 @@ type Config struct {
 	SVIDBundleFilename string
 
 	// Number of parallel requests to the Agent Workload API. This simulates a number of spiffe-helper replicas within the same instance.
-    ParallelRequests int
+	ParallelRequests int
 
 	// Hint: The hint to pass to the spiffe endpoint to help select SPIFFE IDs
 	Hint string
