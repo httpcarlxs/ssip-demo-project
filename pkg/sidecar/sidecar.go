@@ -125,8 +125,6 @@ func (s *Sidecar) RunDaemon(ctx context.Context) error {
 
 	var tasks []func(context.Context) error
 
-	// If parallel requests are configured, run the parallel daemon loop.
-	// Otherwise, run the standard watcher-based daemon.
 	if s.config.ParallelRequests > 0 {
 		s.config.Log.Info("Starting in continuous parallel request mode")
 		tasks = append(tasks, s.runParallelDaemon)
@@ -153,39 +151,30 @@ func (s *Sidecar) RunDaemon(ctx context.Context) error {
 	return err
 }
 
-// runParallelDaemon starts a pool of workers that continuously make fetch requests.
 func (s *Sidecar) runParallelDaemon(ctx context.Context) error {
 	var wg sync.WaitGroup
 
-	// Start a pool of N workers, where N is ParallelRequests.
 	for i := 0; i < s.config.ParallelRequests; i++ {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
 			s.config.Log.Debugf("Starting parallel worker %d", workerID)
 
-			// Each worker loops indefinitely, making requests.
 			for {
-				// Perform the fetch operation. Errors are logged within the function.
 				_ = s.fetchAllCredentials(ctx)
 
-				// Check if the context has been canceled after the work is done.
-				// If so, the worker should exit its loop.
 				select {
 				case <-ctx.Done():
 					s.config.Log.Debugf("Stopping parallel worker %d", workerID)
 					return
 				default:
-					// Continue to the next request immediately.
 				}
 			}
 		}(i + 1)
 	}
 
-	// Wait for the context to be canceled (e.g., by SIGINT).
 	<-ctx.Done()
 
-	// Wait for all worker goroutines to finish their current request and exit.
 	s.config.Log.Info("Shutdown signal received, waiting for parallel workers to stop...")
 	wg.Wait()
 	s.config.Log.Info("All parallel workers stopped.")
@@ -193,7 +182,6 @@ func (s *Sidecar) runParallelDaemon(ctx context.Context) error {
 	return nil
 }
 
-// Run is for one-shot mode. It makes a single burst of parallel requests if configured.
 func (s *Sidecar) Run(ctx context.Context) error {
 	if err := s.setupClients(ctx); err != nil {
 		return err
@@ -244,4 +232,309 @@ func (s *Sidecar) fetchAllCredentials(ctx context.Context) error {
 	return nil
 }
 
-// ... (the rest of the file remains the same)
+func (s *Sidecar) setupClients(ctx context.Context) error {
+	if s.x509Enabled() || s.jwtBundleEnabled() {
+		client, err := workloadapi.New(ctx, s.getWorkloadAPIAddress())
+		if err != nil {
+			return err
+		}
+		s.client = client
+	}
+
+	if s.jwtSVIDsEnabled() {
+		jwtSource, err := workloadapi.NewJWTSource(ctx, workloadapi.WithClientOptions(s.getWorkloadAPIAddress()))
+		if err != nil {
+			return err
+		}
+		s.jwtSource = jwtSource
+	}
+
+	return nil
+}
+
+func (s *Sidecar) updateCertificates(svidResponse *workloadapi.X509Context) {
+	s.config.Log.Debug("Updating X.509 certificates")
+	if err := disk.WriteX509Context(svidResponse, s.config.AddIntermediatesToBundle, s.config.IncludeFederatedDomains, s.config.CertDir, s.config.SVIDFilename, s.config.SVIDKeyFilename, s.config.SVIDBundleFilename, s.config.CertFileMode, s.config.KeyFileMode, s.config.Hint); err != nil {
+		s.config.Log.WithError(err).Error("Unable to dump bundle")
+		writeStatus := writeStatusFailed
+		s.health.FileWriteStatuses.X509WriteStatus = &writeStatus
+		return
+	}
+	writeStatus := writeStatusWritten
+	s.health.FileWriteStatuses.X509WriteStatus = &writeStatus
+	s.config.Log.Info("X.509 certificates updated")
+
+	if s.config.Cmd != "" {
+		if err := s.signalProcess(); err != nil {
+			s.config.Log.WithError(err).Error("Unable to signal process")
+		}
+	}
+
+	if s.config.PIDFilename != "" {
+		if err := s.signalPID(); err != nil {
+			s.config.Log.WithError(err).Error("Unable to signal PID file")
+		}
+	}
+
+	if s.config.ReloadExternalProcess != nil {
+		if err := s.config.ReloadExternalProcess(); err != nil {
+			s.config.Log.WithError(err).Error("Unable to reload external process")
+		}
+	}
+
+	s.hooks.certReady(svidResponse)
+}
+
+func (s *Sidecar) signalProcess() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.processRunning {
+		cmdArgs, err := getCmdArgs(s.config.CmdArgs)
+		if err != nil {
+			return fmt.Errorf("error parsing cmd arguments: %w", err)
+		}
+
+		cmd := exec.Command(s.config.Cmd, cmdArgs...) // #nosec
+
+		cmd.Stdin = s.stdin
+		cmd.Stdout = s.stdout
+		cmd.Stderr = s.stderr
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("error executing process \"%v\": %w", s.config.Cmd, err)
+		}
+		s.process = cmd.Process
+		s.processRunning = true
+		go s.checkProcessExit()
+	} else {
+		if err := SignalProcess(s.process, s.config.RenewSignal); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *Sidecar) signalPID() error {
+	pid, err := func() (int, error) {
+		fileBytes, err := os.ReadFile(s.config.PIDFilename)
+		if err != nil {
+			return 0, fmt.Errorf("failed to read pid file \"%s\": %w", s.config.PIDFilename, err)
+		}
+
+		pid, err := strconv.Atoi(string(bytes.TrimSpace(fileBytes)))
+		if err != nil {
+			return 0, fmt.Errorf("failed to parse pid file \"%s\": %w", s.config.PIDFilename, err)
+		}
+
+		pidProcess, err := os.FindProcess(pid)
+		if err != nil {
+			return pid, fmt.Errorf("failed to find process id %d: %w", pid, err)
+		}
+
+		return pid, SignalProcess(pidProcess, s.config.RenewSignal)
+	}()
+	s.hooks.pidFileSignalled(pid, err)
+	return err
+}
+
+func (s *Sidecar) checkProcessExit() {
+	s.mu.Lock()
+	if !s.processRunning {
+		panic("checkProcessExit called with no process running")
+	}
+
+	proc := s.process
+	s.mu.Unlock()
+
+	state, err := proc.Wait()
+	if err != nil {
+		s.config.Log.Errorf("error waiting for process exit: %v", err)
+	}
+
+	s.hooks.cmdExit(*state)
+
+	s.mu.Lock()
+	s.processRunning = false
+	s.mu.Unlock()
+}
+
+func (s *Sidecar) fetchJWTSVIDs(ctx context.Context, jwtAudience string, jwtExtraAudiences []string) ([]*jwtsvid.SVID, error) {
+	jwtSVIDs, err := s.jwtSource.FetchJWTSVIDs(ctx, jwtsvid.Params{Audience: jwtAudience, ExtraAudiences: jwtExtraAudiences})
+	if err != nil {
+		s.config.Log.Errorf("Unable to fetch JWT SVID: %v", err)
+		return nil, err
+	}
+	for _, jwtSVID := range jwtSVIDs {
+		_, err = jwtsvid.ParseAndValidate(jwtSVID.Marshal(), s.jwtSource, []string{jwtAudience})
+		if err != nil {
+			s.config.Log.Errorf("Unable to parse or validate token: %v", err)
+			return nil, err
+		}
+	}
+
+	return jwtSVIDs, nil
+}
+
+func createRetryIntervalFunc() func() time.Duration {
+	const (
+		initialBackoff = 1 * time.Second
+		maxBackoff     = 60 * time.Second
+		multiplier     = 2
+	)
+	backoffInterval := initialBackoff
+	return func() time.Duration {
+		currentBackoff := backoffInterval
+		backoffInterval *= multiplier
+		if backoffInterval > maxBackoff {
+			backoffInterval = maxBackoff
+		}
+		return currentBackoff
+	}
+}
+
+func getRefreshInterval(svid *jwtsvid.SVID) time.Duration {
+	return time.Until(svid.Expiry)/2 + time.Second
+}
+
+func (s *Sidecar) performJWTSVIDUpdate(ctx context.Context, jwtAudience string, jwtExtraAudiences []string, jwtSVIDFilename string) ([]*jwtsvid.SVID, error) {
+	s.config.Log.Debug("Updating JWT SVID")
+
+	jwtSVIDs, err := s.fetchJWTSVIDs(ctx, jwtAudience, jwtExtraAudiences)
+	if err != nil {
+		s.config.Log.Errorf("Unable to update JWT SVID: %v", err)
+		return nil, err
+	}
+
+	jwtSVIDPath := path.Join(s.config.CertDir, jwtSVIDFilename)
+	if err = disk.WriteJWTSVID(jwtSVIDs, s.config.CertDir, jwtSVIDFilename, s.config.JWTSVIDFileMode, s.config.Hint); err != nil {
+		s.config.Log.Errorf("Unable to update JWT SVID: %v", err)
+		s.health.FileWriteStatuses.JWTWriteStatus[jwtSVIDPath] = writeStatusFailed
+		return nil, err
+	}
+	s.health.FileWriteStatuses.JWTWriteStatus[jwtSVIDPath] = writeStatusWritten
+
+	s.config.Log.Info("JWT SVID updated")
+	return jwtSVIDs, nil
+}
+
+func (s *Sidecar) updateJWTSVID(ctx context.Context, jwtAudience string, jwtExtraAudiences []string, jwtSVIDFilename string) {
+	retryInterval := createRetryIntervalFunc()
+	var initialInterval time.Duration
+	jwtSVIDs, err := s.performJWTSVIDUpdate(ctx, jwtAudience, jwtExtraAudiences, jwtSVIDFilename)
+	if err != nil {
+		initialInterval = retryInterval()
+	} else {
+		initialInterval = getRefreshInterval(jwtSVIDs[0])
+	}
+	ticker := time.NewTicker(initialInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			jwtSVIDs, err = s.performJWTSVIDUpdate(ctx, jwtAudience, jwtExtraAudiences, jwtSVIDFilename)
+			if err == nil {
+				retryInterval = createRetryIntervalFunc()
+				ticker.Reset(getRefreshInterval(jwtSVIDs[0]))
+			} else {
+				ticker.Reset(retryInterval())
+			}
+		}
+	}
+}
+
+func (s *Sidecar) x509Enabled() bool {
+	return s.config.SVIDFilename != "" && s.config.SVIDKeyFilename != "" && s.config.SVIDBundleFilename != ""
+}
+
+func (s *Sidecar) jwtBundleEnabled() bool {
+	return s.config.JWTBundleFilename != ""
+}
+
+func (s *Sidecar) jwtSVIDsEnabled() bool {
+	return len(s.config.JWTSVIDs) > 0
+}
+
+type x509Watcher struct {
+	sidecar *Sidecar
+}
+
+func (w x509Watcher) OnX509ContextUpdate(svids *workloadapi.X509Context) {
+	for _, svid := range svids.SVIDs {
+		w.sidecar.config.Log.WithField("spiffe_id", svid.ID).Info("Received update")
+	}
+
+	w.sidecar.updateCertificates(svids)
+}
+
+func (w x509Watcher) OnX509ContextWatchError(err error) {
+	if status.Code(err) != codes.Canceled {
+		w.sidecar.config.Log.Errorf("Error while watching x509 context: %v", err)
+	}
+}
+
+func getCmdArgs(args string) ([]string, error) {
+	if args == "" {
+		return []string{}, nil
+	}
+
+	r := csv.NewReader(strings.NewReader(args))
+	r.Comma = ' ' // space
+	cmdArgs, err := r.Read()
+	if err != nil {
+		return nil, err
+	}
+
+	return cmdArgs, nil
+}
+
+type JWTBundlesWatcher struct {
+	sidecar *Sidecar
+}
+
+func (w JWTBundlesWatcher) OnJWTBundlesUpdate(jwkSet *jwtbundle.Set) {
+	w.sidecar.config.Log.Debug("Updating JWT bundle")
+	jwtBundleFilePath := path.Join(w.sidecar.config.CertDir, w.sidecar.config.JWTBundleFilename)
+	if err := disk.WriteJWTBundleSet(jwkSet, w.sidecar.config.CertDir, w.sidecar.config.JWTBundleFilename, w.sidecar.config.JWTBundleFileMode); err != nil {
+		w.sidecar.config.Log.Errorf("Error writing JWT Bundle to disk: %v", err)
+		w.sidecar.health.FileWriteStatuses.JWTWriteStatus[jwtBundleFilePath] = writeStatusFailed
+		return
+	}
+	w.sidecar.health.FileWriteStatuses.JWTWriteStatus[jwtBundleFilePath] = writeStatusWritten
+
+	w.sidecar.config.Log.Info("JWT bundle updated")
+}
+
+func (w JWTBundlesWatcher) OnJWTBundlesWatchError(err error) {
+	if status.Code(err) != codes.Canceled {
+		w.sidecar.config.Log.Errorf("Error while watching JWT bundles: %v", err)
+	}
+}
+
+func (s *Sidecar) CheckLiveness() bool {
+	for _, writeStatus := range s.health.FileWriteStatuses.JWTWriteStatus {
+		if writeStatus == writeStatusFailed {
+			return false
+		}
+	}
+	if s.x509Enabled() && *s.health.FileWriteStatuses.X509WriteStatus == writeStatusFailed {
+		return false
+	}
+	return true
+}
+
+func (s *Sidecar) CheckReadiness() bool {
+	for _, writeStatus := range s.health.FileWriteStatuses.JWTWriteStatus {
+		if writeStatus != writeStatusWritten {
+			return false
+		}
+	}
+	return !s.x509Enabled() || *s.health.FileWriteStatuses.X509WriteStatus == writeStatusWritten
+}
+
+func (s *Sidecar) GetHealth() Health {
+	return s.health
+}
