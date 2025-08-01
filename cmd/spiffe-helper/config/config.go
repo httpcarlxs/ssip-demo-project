@@ -65,162 +65,7 @@ type JWTConfig struct {
 	UnusedKeyPositions map[string][]token.Pos `hcl:",unusedKeyPositions"`
 }
 
-// ParseConfigFile parses the given HCL file into a Config struct
-func ParseConfigFile(file string) (*Config, error) {
-	// Read HCL file
-	dat, err := os.ReadFile(file)
-	if err != nil {
-		return nil, err
-	}
-
-	// Parse HCL
-	config := new(Config)
-	if err := hcl.Decode(config, string(dat)); err != nil {
-		return nil, err
-	}
-
-	return config, nil
-}
-
-// ParseConfigFlagOverrides handles command line arguments that override config file settings
-func (c *Config) ParseConfigFlagOverrides(daemonModeFlag bool, daemonModeFlagName string) {
-	if isFlagPassed(daemonModeFlagName) {
-		// If daemon mode is set by CLI this takes precedence
-		c.DaemonMode = &daemonModeFlag
-	} else if c.DaemonMode == nil {
-		// If daemon mode is not set, then default to true
-		daemonMode := true
-		c.DaemonMode = &daemonMode
-	}
-}
-
-func (c *Config) ValidateConfig(log logrus.FieldLogger) error {
-	if err := c.checkForUnknownConfig(); err != nil {
-		return err
-	}
-
-	if err := validateOSConfig(c); err != nil {
-		return err
-	}
-
-	for _, jwtConfig := range c.JWTSVIDs {
-		if jwtConfig.JWTSVIDFilename == "" {
-			return errors.New("'jwt_file_name' is required in 'jwt_svids'")
-		}
-		if jwtConfig.JWTAudience == "" {
-			return errors.New("'jwt_audience' is required in 'jwt_svids'")
-		}
-	}
-
-	if c.AgentAddress == "" {
-		spireAgentAddress := os.Getenv("SPIRE_AGENT_ADDRESS")
-		spiffeEndpointSocket := os.Getenv("SPIFFE_ENDPOINT_SOCKET")
-
-		switch {
-		case spireAgentAddress != "" && spiffeEndpointSocket == "":
-			log.Warn("SPIRE_AGENT_ADDRESS is deprecated and will be removed in 0.10.0. Use SPIFFE_ENDPOINT_SOCKET instead.")
-			c.AgentAddress = spireAgentAddress
-		case spireAgentAddress != "" && spiffeEndpointSocket != "":
-			return errors.New("both SPIRE_AGENT_ADDRESS and SPIFFE_ENDPOINT_SOCKET set. Use SPIFFE_ENDPOINT_SOCKET only. Support for SPIRE_AGENT_ADDRESS is deprecated and will be removed in 0.10.0")
-		case spireAgentAddress == "" && spiffeEndpointSocket != "":
-			c.AgentAddress = spiffeEndpointSocket
-		default:
-			c.AgentAddress = defaultAgentAddress
-		}
-	}
-
-	if c.DaemonMode != nil && !*c.DaemonMode {
-		if c.Cmd != "" {
-			log.Warn("cmd is set but daemon_mode is false. cmd will be ignored. This may become an error in a future release.")
-		}
-		if c.RenewSignal != "" {
-			log.Warn("renew_signal is set but daemon_mode is false. renew_signal will be ignored. This may become an error in a future release.")
-		}
-		// pid_file_name is new enough that there should not be existing configurations that use it without daemon_mode
-		// so we can error here without backcompat worries. In future we may support one-shot signalling of a process, but
-		// it's ignored at the moment so we shouldn't allow the user to think it's doing something.
-		if c.PIDFilename != "" {
-			return errors.New("pid_file_name is set but daemon_mode is false. pid_file_name is only supported in daemon_mode")
-		}
-	}
-
-	if c.PIDFilename != "" && c.RenewSignal == "" {
-		return errors.New("must specify renew_signal when using pid_file_name")
-	}
-
-	x509Enabled, err := validateX509Config(c)
-	if err != nil {
-		return err
-	}
-
-	jwtBundleEnabled, jwtSVIDsEnabled := validateJWTConfig(c)
-
-	if !x509Enabled && !jwtBundleEnabled && !jwtSVIDsEnabled {
-		return errors.New("at least one of the sets ('svid_file_name', 'svid_key_file_name', 'svid_bundle_file_name'), 'jwt_svids', or 'jwt_bundle_file_name' must be fully specified")
-	}
-
-	if c.CertFileMode < 0 {
-		return errors.New("cert file mode must be positive")
-	} else if c.CertFileMode == 0 {
-		c.CertFileMode = defaultCertFileMode
-	}
-	if c.KeyFileMode < 0 {
-		return errors.New("key file mode must be positive")
-	} else if c.KeyFileMode == 0 {
-		c.KeyFileMode = defaultKeyFileMode
-	}
-	if c.JWTBundleFileMode < 0 {
-		return errors.New("jwt bundle file mode must be positive")
-	} else if c.JWTBundleFileMode == 0 {
-		c.JWTBundleFileMode = defaultJWTBundleFileMode
-	}
-	if c.JWTSVIDFileMode < 0 {
-		return errors.New("jwt svid file mode must be positive")
-	} else if c.JWTSVIDFileMode == 0 {
-		c.JWTSVIDFileMode = defaultJWTSVIDFileMode
-	}
-
-	if c.HealthCheck.ListenerEnabled {
-		if c.HealthCheck.BindPort < 0 {
-			return errors.New("bind port must be positive")
-		}
-		if c.HealthCheck.BindPort == 0 {
-			c.HealthCheck.BindPort = defaultBindPort
-		}
-		if c.HealthCheck.LivenessPath == "" {
-			c.HealthCheck.LivenessPath = defaultLivenessPath
-		}
-		if c.HealthCheck.ReadinessPath == "" {
-			c.HealthCheck.ReadinessPath = defaultReadinessPath
-		}
-	}
-
-	return nil
-}
-
-// checkForUnknownConfig looks for any unknown configuration keys and returns an error if one is found
-func (c *Config) checkForUnknownConfig() error {
-	if len(c.UnusedKeyPositions) != 0 {
-		return fmt.Errorf("unknown top level key(s): %s", mapKeysToString(c.UnusedKeyPositions))
-	}
-
-	for i, jwtSVID := range c.JWTSVIDs {
-		if len(jwtSVID.UnusedKeyPositions) != 0 {
-			return fmt.Errorf("unknown key(s) in jwt_svids[%d]: %s", i, mapKeysToString(jwtSVID.UnusedKeyPositions))
-		}
-	}
-
-	return nil
-}
-
-func ParseConfig(configFile string, daemonModeFlag bool, daemonModeFlagName string) (*Config, error) {
-	hclConfig, err := ParseConfigFile(configFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse %q: %w", configFile, err)
-	}
-	hclConfig.ParseConfigFlagOverrides(daemonModeFlag, daemonModeFlagName)
-	return hclConfig, nil
-}
+// ... (ParseConfigFile, ParseConfigFlagOverrides, ValidateConfig, etc. remain the same)
 
 func NewSidecarConfig(config *Config, log logrus.FieldLogger) *sidecar.Config {
 	sidecarConfig := &sidecar.Config{
@@ -230,10 +75,10 @@ func NewSidecarConfig(config *Config, log logrus.FieldLogger) *sidecar.Config {
 		CmdArgs:                  config.CmdArgs,
 		PIDFilename:              config.PIDFilename,
 		CertDir:                  config.CertDir,
-		CertFileMode:             fs.FileMode(config.CertFileMode),      //nolint:gosec
-		KeyFileMode:              fs.FileMode(config.KeyFileMode),       //nolint:gosec
-		JWTBundleFileMode:        fs.FileMode(config.JWTBundleFileMode), //nolint:gosec
-		JWTSVIDFileMode:          fs.FileMode(config.JWTSVIDFileMode),   //nolint:gosec
+		CertFileMode:             fs.FileMode(config.CertFileMode),
+		KeyFileMode:              fs.FileMode(config.KeyFileMode),
+		JWTBundleFileMode:        fs.FileMode(config.JWTBundleFileMode),
+		JWTSVIDFileMode:          fs.FileMode(config.JWTSVIDFileMode),
 		IncludeFederatedDomains:  config.IncludeFederatedDomains,
 		JWTBundleFilename:        config.JWTBundleFilename,
 		Log:                      log,

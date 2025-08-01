@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spiffe/go-spiffe/v2/bundle/jwtbundle"
+	"github.com.com/spiffe/go-spiffe/v2/bundle/jwtbundle"
 	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
 	"github.com/spiffe/go-spiffe/v2/workloadapi"
 	"github.com/spiffe/spiffe-helper/pkg/disk"
@@ -82,15 +82,9 @@ func New(config *Config) *Sidecar {
 				JWTWriteStatus: make(map[string]string),
 			},
 		},
-		// There's currently no support for controlling stdio
-		// redirection in the spiffe-helper configuration or API, these
-		// are just used in tests that construct Sidecar directly. In
-		// regular use they're always passing through the OS's stdio.
 		stdin:  os.Stdin,
 		stdout: os.Stdout,
 		stderr: os.Stderr,
-
-		// Initialize hooks with noop functions
 		hooks: hooks{
 			certReady:        func(*workloadapi.X509Context) {},
 			cmdExit:          func(os.ProcessState) {},
@@ -118,9 +112,6 @@ func (s *Sidecar) setupHealth() {
 }
 
 // RunDaemon starts the main loop
-// Starts the workload API client to listen for new SVID updates
-// When a new SVID is received on the updateChan, the SVID certificates
-// are stored in disk and a restart signal is sent to the proxy's process
 func (s *Sidecar) RunDaemon(ctx context.Context) error {
 	if err := s.setupClients(ctx); err != nil {
 		return err
@@ -134,18 +125,24 @@ func (s *Sidecar) RunDaemon(ctx context.Context) error {
 
 	var tasks []func(context.Context) error
 
-	if s.x509Enabled() {
-		s.config.Log.Info("Watching for X509 Context")
-		tasks = append(tasks, s.watchX509Context)
-	}
-
-	if s.jwtBundleEnabled() {
-		s.config.Log.Info("Watching for JWT Bundles")
-		tasks = append(tasks, s.watchJWTBundles)
-	}
-
-	if s.jwtSVIDsEnabled() {
-		tasks = append(tasks, s.watchJWTSVIDs)
+	// If parallel requests are configured, run the parallel daemon loop.
+	// Otherwise, run the standard watcher-based daemon.
+	if s.config.ParallelRequests > 0 {
+		s.config.Log.Info("Starting in continuous parallel request mode")
+		tasks = append(tasks, s.runParallelDaemon)
+	} else {
+		s.config.Log.Info("Starting in standard daemon mode")
+		if s.x509Enabled() {
+			s.config.Log.Info("Watching for X509 Context")
+			tasks = append(tasks, s.watchX509Context)
+		}
+		if s.jwtBundleEnabled() {
+			s.config.Log.Info("Watching for JWT Bundles")
+			tasks = append(tasks, s.watchJWTBundles)
+		}
+		if s.jwtSVIDsEnabled() {
+			tasks = append(tasks, s.watchJWTSVIDs)
+		}
 	}
 
 	err := util.RunTasks(ctx, tasks...)
@@ -156,6 +153,47 @@ func (s *Sidecar) RunDaemon(ctx context.Context) error {
 	return err
 }
 
+// runParallelDaemon starts a pool of workers that continuously make fetch requests.
+func (s *Sidecar) runParallelDaemon(ctx context.Context) error {
+	var wg sync.WaitGroup
+
+	// Start a pool of N workers, where N is ParallelRequests.
+	for i := 0; i < s.config.ParallelRequests; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			s.config.Log.Debugf("Starting parallel worker %d", workerID)
+
+			// Each worker loops indefinitely, making requests.
+			for {
+				// Perform the fetch operation. Errors are logged within the function.
+				_ = s.fetchAllCredentials(ctx)
+
+				// Check if the context has been canceled after the work is done.
+				// If so, the worker should exit its loop.
+				select {
+				case <-ctx.Done():
+					s.config.Log.Debugf("Stopping parallel worker %d", workerID)
+					return
+				default:
+					// Continue to the next request immediately.
+				}
+			}
+		}(i + 1)
+	}
+
+	// Wait for the context to be canceled (e.g., by SIGINT).
+	<-ctx.Done()
+
+	// Wait for all worker goroutines to finish their current request and exit.
+	s.config.Log.Info("Shutdown signal received, waiting for parallel workers to stop...")
+	wg.Wait()
+	s.config.Log.Info("All parallel workers stopped.")
+
+	return nil
+}
+
+// Run is for one-shot mode. It makes a single burst of parallel requests if configured.
 func (s *Sidecar) Run(ctx context.Context) error {
 	if err := s.setupClients(ctx); err != nil {
 		return err
@@ -168,7 +206,7 @@ func (s *Sidecar) Run(ctx context.Context) error {
 	}
 
 	if s.config.ParallelRequests > 0 {
-		s.config.Log.Infof("Running %d parallel requests", s.config.ParallelRequests)
+		s.config.Log.Infof("Running a burst of %d parallel requests", s.config.ParallelRequests)
 		return util.RunTasksInParallel(ctx, s.fetchAllCredentials, s.config.ParallelRequests)
 	}
 
